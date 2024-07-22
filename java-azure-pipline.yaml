@@ -1,0 +1,62 @@
+name: $(Date:yyyyMMdd).$(Rev:.r)
+
+variables:
+  - group: CoverityVariables Aires- Java
+  - name: cov.bin
+    value: '$(cov.latest)'
+  - name: cov.latest
+    value: 'I:\Coverity\Coverity Static Analysis\bin'
+  - name: cov.idir
+    value: '$(Build.SourcesDirectory)/idir'
+
+trigger:
+  - "*"
+
+pool:
+  name: 'IT - Agent Pool'
+
+jobs:
+  - job: BuildAndCoverity
+    displayName: 'Build and Coverity Scan'
+    workspace:
+      clean: all
+    steps:
+      - task: Gradle@2
+        inputs:
+          workingDirectory: '$(System.DefaultWorkingDirectory)'
+          gradleWrapperFile: 'gradlew'
+          gradleOptions: '-Xmx3072m'
+          javaHomeOption: 'JDKVersion'
+          jdkVersionOption: '11'
+          tasks: 'clean build'
+        displayName: 'Gradle Build'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Build'
+        inputs:
+          script: '"$(cov.bin)\cov-build" --dir "$(cov.idir)" --fs-capture-search "$(Build.SourcesDirectory)" gradlew clean build'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Import SCM'
+        inputs:
+          script: '"$(cov.bin)\cov-import-scm" --dir "$(cov.idir)" --scm git'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Analyze'
+        inputs:
+          script: '"$(cov.bin)\cov-analyze" --dir "$(cov.idir)" --strip-path "$(Build.SourcesDirectory)" --all --enable-callgraph-metrics --webapp-security'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Commit Defects'
+        inputs:
+          script: '"$(cov.bin)\cov-commit-defects" --dir "$(cov.idir)" --host "$(cov.host)" --auth-key-file "$(cov.authkey)" --stream "$(cov.stream)" --description "$(Build.BuildURI)" --target Windows_x86_64 --version "$(Build.SourceVersion)"'
+
+  - job: PublishArtifacts
+    displayName: 'Publish Build Artifacts'
+    condition: always()
+    dependsOn: BuildAndCoverity
+    steps:
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathtoPublish: '$(System.DefaultWorkingDirectory)/build/libs'
+          artifactName: 'drop'
