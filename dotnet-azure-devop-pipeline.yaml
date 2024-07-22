@@ -1,0 +1,105 @@
+name: $(Date:yyyyMMdd).$(Rev:.r)
+
+
+variables:
+  - group: CoverityVariables
+  - name: cov.bin
+    value: '$(cov.latest)'
+  - name: cov.latest
+    value: 'I:\Coverity\Coverity Static Analysis\bin'
+  - name: cov.idir
+    value: '$(Build.SourcesDirectory)/idir'
+  - name: cov.authkey
+    value: '$(Agent.TempDirectory)\ipcipd-auth-key-e.key'
+  - name: cov.stream
+    value: '[Dev]3632897;OCR'
+  - name: cov.scm
+    value: 'git'
+  - name: cov.host
+    value: 'gide-phxld1e.vmpc1.cloud.boeing.com'
+  - name: cov.dataport
+    value: 9090
+  - name: buildConfiguration
+    value: 'Release'
+  - name: solution
+    value: '/ebasketFCR.sln'
+  - name: projects
+    value: '/ebasketFCR.csproj'
+  - name: BuildPlatform
+    value: 'any cpu'
+
+trigger:
+  - "*"
+
+pool:
+  name: 'IT - Agent Pool'
+  demands:
+    - msbuild
+    - visualstudio
+
+jobs:
+  - job: BuildAndCoverity
+    displayName: 'Build and Coverity Scan'
+    workspace:
+      clean: all
+    steps:
+      - task: NuGetToolInstaller@1
+        inputs:
+          versionSpec: '6.x'
+
+      - task: NuGetCommand@2
+        inputs:
+          command: 'restore'
+          restoreSolution: '**/*.sln'
+          feedsToUse: 'select'
+          vstsFeed: '4aaf7409-8d4a-420c-8390-77d5b1d5ddaf/f015a00a-dad4-42f5-a360-2f960bc43df4'
+          includeNuGetOrg: false
+
+      - task: DownloadSecureFile@1
+        inputs:
+          secureFile: 'ipcipd-auth-key-e.key'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Build'
+        inputs:
+          script: '"$(cov.bin)\cov-build" --dir "$(cov.idir)" --fs-capture-search "$(Build.SourcesDirectory)" msbuild $(solution) /p:Configuration=$(buildConfiguration) /p:Platform="$(BuildPlatform)"'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Import SCM'
+        inputs:
+          script: '"$(cov.bin)\cov-import-scm" --dir "$(cov.idir)" --scm git'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Analyze'
+        inputs:
+          script: '"$(cov.bin)\cov-analyze" --dir "$(cov.idir)" --strip-path "$(Build.SourcesDirectory)" --all --enable-callgraph-metrics --webapp-security'
+
+      - task: CmdLine@2
+        displayName: 'Run Coverity Commit Defects'
+        inputs:
+          script: '"$(cov.bin)\cov-commit-defects" --dir "$(cov.idir)" --host "$(cov.host)" --dataport "$(cov.dataport)" --auth-key-file "$(cov.authkey)" --stream "$(cov.stream)" --scm "$(cov.scm)" --description "$(Build.BuildURI)" --target Windows_x86_64 --version "$(Build.SourceVersion)"'
+
+      - task: VSBuild@1
+        displayName: 'Build solution'
+        inputs:
+          solution: '**/*.sln'
+          msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:PackageLocation="$(build.artifactstagingdirectory)\"'
+          platform: '$(BuildPlatform)'
+          configuration: '$(BuildConfiguration)'
+
+  - job: PublishArtifacts
+    displayName: 'Publish Build Artifacts'
+    condition: always()
+    dependsOn: BuildAndCoverity
+    steps:
+      - task: CopyFiles@2
+        inputs:
+          SourceFolder: '$(Build.SourcesDirectory)'
+          Contents: '/bin/$(buildConfiguration)/'
+          TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: '$(Build.ArtifactStagingDirectory)'
+          artifactName: 'drop'
+          publishLocation: 'Container'
