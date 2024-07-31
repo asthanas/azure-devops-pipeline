@@ -1,0 +1,60 @@
+trigger:
+  "*"
+
+pool:
+  name: 'IT - Agent Pool' # Specify your agent pool name here
+
+variables:
+  AZURE_ARTIFACTS_USERNAME: 'ITBP' # Set your Azure DevOps username
+  AZURE_ARTIFACTS_PASSWORD: '<PASSWORD>' # Use the system access token for authentication
+  AZURE_ARTIFACTS_SEED_URL: '<SEED-URL>'
+  SRES_URL: '<SRES_URL>'
+  SRES_USERNAME: '<USERNAME>'
+  SRES_PASSWORD: '<PASSWORD>'
+
+steps:
+  - checkout: self # Check out the code from the repository
+    clean: true
+
+  - task: qetza.replacetokens.replacetokens-task.replacetokens@5
+    displayName: 'Replace tokens in /gradle.properties'
+    inputs:
+      targetFiles: '/gradle.properties'
+
+  - script: |
+      echo "Listing contents of MX3.7-JDBC folder:"
+      dir "$(System.DefaultWorkingDirectory)\MX3.7-JDBC"
+    displayName: 'List Source Contents'
+
+  - task: CopyFiles@2
+    displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)\MX3.7-JDBC'
+      Contents: '**' # Copy all files and subdirectories for testing
+      TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+  - script: |
+      echo "Listing contents of Artifact Staging Directory:"
+      dir "$(Build.ArtifactStagingDirectory)"
+    displayName: 'List Artifact Staging Directory Contents'
+
+  - script: |
+      echo "Executing gradlew.bat in the Artifact Staging Directory"
+      call "$(Build.ArtifactStagingDirectory)\gradlew.bat" publish --debug
+    displayName: 'Publish JAR using Gradle'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)'
+    env:
+      AZURE_ARTIFACTS_USERNAME: $(AZURE_ARTIFACTS_USERNAME)
+      AZURE_ARTIFACTS_PASSWORD: $(AZURE_ARTIFACTS_PASSWORD)
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Build Artifacts'
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)' 
+      ArtifactName: 'drop'
+      publishLocation: 'Container'
+
+  - script: |
+      echo "Uploading JAR to Azure Artifacts"
+      curl -u $(AZURE_ARTIFACTS_USERNAME):$(AZURE_ARTIFACTS_PASSWORD) -T "$(Build.ArtifactStagingDirectory)/*.jar" "$(AZURE_ARTIFACTS_SEED_URL)"
+    displayName: 'Upload JAR to Azure Artifacts'
